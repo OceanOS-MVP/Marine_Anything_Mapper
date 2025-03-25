@@ -3,34 +3,13 @@ library(leaflet)
 library(terra)
 library(tidyverse)
 library(viridis)
+library(shinyjs)      # Added shinyjs to allow running JavaScript
 
 # --- Simulated Environmental Predictor Rasters ---
 
-# Define an extent roughly covering the European continental shelf (e.g., North-East Atlantic/North Sea)
 ext <- ext(-10, 10, 40, 65)
 ncol <- 100
 nrow <- 100
-
-# load_raster <- function(file_path, extent) {
-#   r <- terra::rast(x = "data/bathymetry.png")
-#   terra::ext(r) <- terra::ext(
-#     extent["xmin"], extent["xmax"],
-#     extent["ymin"], extent["ymax"])
-#   terra::crs(r) <- "EPSG:4326"  # WGS84
-#   return(r)
-# }
-# 
-# r_bathymetry <- load_raster(
-#   file_path = "data/bathymetry.png",
-#   extent = c(ymin = -45.0, xmin = 24.0, ymax = 70.0, xmax = 83.0))
-# plot(r_bathymetry)
-# 
-# temperature <- terra::rast("data/temperature.png")
-# chlorophyll <- terra::rast("data/chlorophyll.png")
-# salinity <- terra::rast("data/salinity.png")
-# 
-# x <- terra::rast("~/Downloads/bathymetry.geotiff")
-
 
 # Simulate bathymetry (e.g., depths from -5000m to 0)
 bathymetry <- rast(
@@ -70,7 +49,6 @@ predictorsStack <- c(bathymetry, chlorophyll, salinity)
 names(predictorsStack) <- c("Bathymetry", "Chlorophyll", "Salinity")
 
 # --- Reactive Storage for User-Selected Points ---
-# Each point will store its lng, lat and the values for each predictor.
 selectedPoints <- reactiveVal(data.frame(
   lng = numeric(),
   lat = numeric(),
@@ -141,6 +119,7 @@ shinyServer(function(input, output, session) {
       Bathymetry = b_val,
       Chlorophyll = chl_val,
       Salinity = sal_val)
+    
     # Update reactive value
     df %>%
       bind_rows(newRow) %>%
@@ -204,12 +183,13 @@ shinyServer(function(input, output, session) {
     }
     if (nrow(pos_complete) == 0) {
       showNotification("No points with complete data", type = "error")
+      return()
     }
     pos <- pos_complete
     # Label positive observations
     pos$Response <- 1
     
-    # Generate 100 random negative points within the raster extent
+    # Generate 1000 random negative points within the raster extent
     random_coords <- data.frame(
       Longitude = runif(1000, xmin(bathymetry), xmax(bathymetry)),
       Latitude  = runif(1000, ymin(bathymetry), ymax(bathymetry))
@@ -230,8 +210,8 @@ shinyServer(function(input, output, session) {
     # Predict across the entire raster stack using the fitted model
     pred_raster <- terra::predict(predictorsStack, model, type = "response")
     predRaster(pred_raster)
-
-    # # Define a numeric color palette using the viridis scale
+    
+    # Define a numeric color palette using the viridis scale
     pal <- colorNumeric(
       palette = viridis::magma(256),
       domain = c(
@@ -240,28 +220,23 @@ shinyServer(function(input, output, session) {
       na.color = "transparent")
     
     leafletProxy("map") %>%
-      #clearImages() %>%
       addRasterImage(
         pred_raster,
         colors = pal,
         opacity = 0.8,
         group = "Prediction",
-        project = TRUE) %>%
-      updateRadioButtons("layerSelect", selected = "Prediction")
+        project = TRUE)
     
-      # clearControls() %>%
-      # addLegend(
-      #   pal = pal,
-      #   values = c(
-      #     min(values(pred_raster), na.rm = TRUE),
-      #     max(values(pred_raster), na.rm = TRUE)),
-      #   title = "Similarity")
-  })
-  
-  # Update layer selection when prediction changes
-  observeEvent(input$predRaster, {
-    leafletProxy("map") %>%
-      addMarkers(lng = ~lng, lat = ~lat, group = "Points")
+    # Programmatically update the layers control to select the "Prediction" group:
+    runjs("
+      var radios = document.getElementsByClassName('leaflet-control-layers-selector');
+      for (var i = 0; i < radios.length; i++) {
+        if(radios[i].nextSibling.textContent.trim() === 'Prediction'){
+          radios[i].click();
+          break;
+        }
+      }
+    ");
   })
   
   # --- Display Selected Points in a Data Table ---

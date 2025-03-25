@@ -1,20 +1,26 @@
 library(shiny)
+library(shinyjs)
 library(leaflet)
 library(DT)
 
 shinyUI(fluidPage(
+  useShinyjs(),
   titlePanel("Marine Anything Mapper"),
   sidebarLayout(
     sidebarPanel(
-      p("Please select locations by clicking on the web map in the main panel on the right"),
+      p("Please click the map on the right to select locations"),
+      br(),
+      br(),
       h4("--- Or ---"),
-      p("Upload a CSV with location coordinates.
-        The CSV should contain two numeric columns, lng and lat."),
       br(),
       br(),
-      fileInput("upload_csv", "Upload CSV File", accept = c(".csv")),
+      fileInput(
+        "upload_csv",
+        "Upload a CSV with lng and lat columns.",
+        accept = c(".csv")),
       br(),
-      h4("Selected Locations"),
+      br(),
+      h4("Selected Locations:"),
       DT::dataTableOutput("locationTable"),
       br(),
       br(),

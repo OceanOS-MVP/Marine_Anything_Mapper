@@ -166,7 +166,11 @@ shinyServer(function(input, output, session) {
     
     leafletProxy("map") %>%
       clearImages() %>%
-      addRasterImage(pred_raster, colors = pal_pred, opacity = 0.8, project = TRUE) %>%
+      addRasterImage(
+        pred_raster,
+        colors = pal_pred,
+        opacity = 0.8,
+        project = TRUE) %>%
       clearControls() %>%
       addLegend(pal = pal_pred,
                 values = c(min(values(pred_raster), na.rm = TRUE),

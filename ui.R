@@ -10,10 +10,11 @@ shinyUI(fluidPage(
       radioButtons("predictor", "Select Environmental Predictor:",
                    choices = c("Bathymetry", "Chlorophyll", "Salinity"),
                    selected = "Bathymetry"),
-      actionButton("submit", "Submit"),
       br(), br(),
       h4("Selected Locations"),
-      DT::dataTableOutput("locationTable")
+      DT::dataTableOutput("locationTable"),
+      br(), br(),
+      actionButton("submit", "Submit")
     ),
     mainPanel(
       leafletOutput("map", height = "600px")

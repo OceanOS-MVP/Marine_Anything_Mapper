@@ -3,58 +3,28 @@ library(leaflet)
 library(terra)
 library(tidyverse)
 library(viridis)
-library(shinyjs)      # Added shinyjs to allow running JavaScript
+library(shinyjs)
 
-# --- Simulated Environmental Predictor Rasters ---
-
-ext <- ext(-10, 10, 40, 65)
-ncol <- 100
-nrow <- 100
-
-# Simulate bathymetry (e.g., depths from -5000m to 0)
-bathymetry <- rast(
-  nrows = nrow,
-  ncols = ncol,
-  ext = ext,
-  crs = "EPSG:4326")
-values(bathymetry) <- matrix(
-  runif(ncol * nrow, min = -5000, max = 0),
-  nrow = nrow,
-  ncol = ncol)
-
-# Simulate chlorophyll concentration (e.g., 0 to 10 mg/m^3)
-chlorophyll <- rast(
-  nrows = nrow,
-  ncols = ncol,
-  ext = ext,
-  crs = "EPSG:4326")
-values(chlorophyll) <- matrix(
-  runif(ncol * nrow, min = 0, max = 10),
-  nrow = nrow,
-  ncol = ncol)
-
-# Simulate salinity (e.g., 30 to 40 PSU)
-salinity <- rast(
-  nrows = nrow,
-  ncols = ncol,
-  ext = ext,
-  crs = "EPSG:4326")
-values(salinity) <- matrix(
-  runif(ncol * nrow, min = 30, max = 40),
-  nrow = nrow,
-  ncol = ncol)
-
-# Create a raster stack for later prediction
-predictorsStack <- c(bathymetry, chlorophyll, salinity)
-names(predictorsStack) <- c("Bathymetry", "Chlorophyll", "Salinity")
+rasters <- terra::rast("data/predictor_rasters.tif")
 
 # --- Reactive Storage for User-Selected Points ---
 selectedPoints <- reactiveVal(data.frame(
   lng = numeric(),
   lat = numeric(),
-  Bathymetry = numeric(),
-  Chlorophyll = numeric(),
-  Salinity = numeric()
+  bathymetry = numeric(),
+  chl = numeric(),
+  thetao = numeric(),
+  so = numeric(),
+  mlotst = numeric(),
+  uo = numeric(),
+  attn = numeric(),
+  diato = numeric(),
+  phyc = numeric(),
+  no3 = numeric(),
+  o2 = numeric(),
+  ph = numeric(),
+  po4 = numeric(),
+  nppv = numeric()
 ))
 
 # --- Reactive Storage for Model Predictions and Layer Order ---
@@ -65,33 +35,15 @@ shinyServer(function(input, output, session) {
   # --- Initial Leaflet Map Setup ---
   output$map <- renderLeaflet({
     leaflet() %>%
-      addProviderTiles(provider = providers$Esri.OceanBasemap) %>%
+      addProviderTiles(
+        provider = providers$Esri.OceanBasemap,
+        group = "Basemap") %>%
       addLayersControl(
         baseGroups = c(
-          "Bathymetry",
-          "Chlorophyll",
-          "Salinity",
+          "Basemap",
           "Prediction"),
         overlayGroups = c("Markers"),
         options = layersControlOptions(collapsed = FALSE)) %>%
-      addRasterImage(
-        bathymetry,
-        colors = viridis::viridis(256),
-        opacity = 0.8,
-        group = "Bathymetry",
-        project = TRUE) %>%
-      addRasterImage(
-        chlorophyll,
-        colors = viridis::viridis(256),
-        opacity = 0.8,
-        group = "Chlorophyll",
-        project = TRUE) %>%
-      addRasterImage(
-        salinity,
-        colors = viridis::viridis(256),
-        opacity = 0.8,
-        group = "Salinity",
-        project = TRUE) %>%
       addScaleBar(
         position = "bottomright",
         options = scaleBarOptions(
@@ -108,17 +60,26 @@ shinyServer(function(input, output, session) {
     lat <- click$lat
     lng <- click$lng
     
-    b_val   <- terra::extract(bathymetry, cbind(lng, lat))[[1]]
-    chl_val <- terra::extract(chlorophyll, cbind(lng, lat))[[1]]
-    sal_val <- terra::extract(salinity, cbind(lng, lat))[[1]]
+    pred_vals <- terra::extract(rasters, cbind(lng, lat))
     
     df <- selectedPoints()
     newRow <- data.frame(
       lng = lng,
       lat = lat,
-      Bathymetry = b_val,
-      Chlorophyll = chl_val,
-      Salinity = sal_val)
+      bathymetry = pred_vals["bathymetry"],
+      chl = pred_vals["chl"],
+      thetao = pred_vals["thetao"],
+      so = pred_vals["so"],
+      mlotst = pred_vals["mlotst"],
+      uo = pred_vals["uo"],
+      attn =  pred_vals["attn"],
+      diato = pred_vals["diato"],
+      phyc = pred_vals["phyc"],
+      no3 = pred_vals["no3"],
+      o2 = pred_vals["o2"],
+      ph = pred_vals["ph"],
+      po4 = pred_vals["po4"],
+      nppv = pred_vals["nppv"])
     
     # Update reactive value
     df %>%
@@ -154,11 +115,10 @@ shinyServer(function(input, output, session) {
     }
     
     # Extract environmental predictor values for each location
-    data$Bathymetry <- terra::extract(bathymetry, cbind(data$lng, data$lat))[,2]
-    data$Chlorophyll <- terra::extract(chlorophyll, cbind(data$lng, data$lat))[,2]
-    data$Salinity <- terra::extract(salinity, cbind(data$lng, data$lat))[,2]
-    
+    pred_vals <- terra::extract(rasters, cbind(data$lng, data$lat))
+
     # Append new locations to the reactive data.frame
+    #TODO: FIX THIS
     selectedPoints(bind_rows(selectedPoints(), data[, c("lng", "lat", "Bathymetry", "Chlorophyll", "Salinity")]))
     
     # Add markers for the uploaded locations
@@ -191,24 +151,27 @@ shinyServer(function(input, output, session) {
     
     # Generate 1000 random negative points within the raster extent
     random_coords <- data.frame(
-      Longitude = runif(1000, xmin(bathymetry), xmax(bathymetry)),
-      Latitude  = runif(1000, ymin(bathymetry), ymax(bathymetry))
+      Longitude = runif(1000, xmin(rasters), xmax(rasters)),
+      Latitude  = runif(1000, ymin(rasters), ymax(rasters))
     )
-    random_vals <- terra::extract(predictorsStack, random_coords)
+    random_vals <- terra::extract(rasters, random_coords)
     random_data <- cbind(random_coords, random_vals[,-1])
     random_data$Response <- 0  # Label negatives
     
     # Combine positive and negative observations
-    model_data <- bind_rows(pos, random_data)
+    model_data <- pos %>%
+      bind_rows(random_data) %>%
+      select(-lng, -lat, -Longitude, -Latitude) %>%
+      filter(complete.cases(.))
     
     # Fit a binary classifier using glm
     model <- glm(
-      formula = Response ~ Bathymetry + Chlorophyll + Salinity,
+      formula = Response ~ .,
       data = model_data,
       family = binomial)
     
     # Predict across the entire raster stack using the fitted model
-    pred_raster <- terra::predict(predictorsStack, model, type = "response")
+    pred_raster <- terra::predict(rasters, model, type = "response")
     predRaster(pred_raster)
     
     # Define a numeric color palette using the viridis scale

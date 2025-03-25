@@ -11,6 +11,27 @@ ext <- ext(-10, 10, 40, 65)
 ncol <- 100
 nrow <- 100
 
+# load_raster <- function(file_path, extent) {
+#   r <- terra::rast(x = "data/bathymetry.png")
+#   terra::ext(r) <- terra::ext(
+#     extent["xmin"], extent["xmax"],
+#     extent["ymin"], extent["ymax"])
+#   terra::crs(r) <- "EPSG:4326"  # WGS84
+#   return(r)
+# }
+# 
+# r_bathymetry <- load_raster(
+#   file_path = "data/bathymetry.png",
+#   extent = c(ymin = -45.0, xmin = 24.0, ymax = 70.0, xmax = 83.0))
+# plot(r_bathymetry)
+# 
+# temperature <- terra::rast("data/temperature.png")
+# chlorophyll <- terra::rast("data/chlorophyll.png")
+# salinity <- terra::rast("data/salinity.png")
+# 
+# x <- terra::rast("~/Downloads/bathymetry.geotiff")
+
+
 # Simulate bathymetry (e.g., depths from -5000m to 0)
 bathymetry <- rast(
   nrows = nrow,
@@ -60,25 +81,39 @@ selectedPoints <- reactiveVal(data.frame(
 
 # --- Reactive Storage for Model Predictions and Layer Order ---
 predRaster <- reactiveVal(NULL)
-layerOrder <- reactiveVal(character(0))
 
 shinyServer(function(input, output, session) {
   
   # --- Initial Leaflet Map Setup ---
   output$map <- renderLeaflet({
     leaflet() %>%
-      addProviderTiles(
-        #group = "Basemap")
-        provider = providers$Esri.OceanBasemap) %>%
+      addProviderTiles(provider = providers$Esri.OceanBasemap) %>%
       addLayersControl(
         baseGroups = c(
-          "Basemap",
           "Bathymetry",
           "Chlorophyll",
           "Salinity",
           "Prediction"),
         overlayGroups = c("Markers"),
         options = layersControlOptions(collapsed = FALSE)) %>%
+      addRasterImage(
+        bathymetry,
+        colors = viridis::viridis(256),
+        opacity = 0.8,
+        group = "Bathymetry",
+        project = TRUE) %>%
+      addRasterImage(
+        chlorophyll,
+        colors = viridis::viridis(256),
+        opacity = 0.8,
+        group = "Chlorophyll",
+        project = TRUE) %>%
+      addRasterImage(
+        salinity,
+        colors = viridis::viridis(256),
+        opacity = 0.8,
+        group = "Salinity",
+        project = TRUE) %>%
       addScaleBar(
         position = "bottomright",
         options = scaleBarOptions(
@@ -106,7 +141,10 @@ shinyServer(function(input, output, session) {
       Bathymetry = b_val,
       Chlorophyll = chl_val,
       Salinity = sal_val)
-    selectedPoints(bind_rows(df, newRow))
+    # Update reactive value
+    df %>%
+      bind_rows(newRow) %>%
+      selectedPoints()
     
     # Add a minimalistic circle marker at the clicked location
     leafletProxy("map") %>% addCircleMarkers(
@@ -156,16 +194,25 @@ shinyServer(function(input, output, session) {
   # --- Run Lookalike GLM Model Upon Submission and Store Prediction Raster ---
   observeEvent(input$submit, {
     pos <- selectedPoints()
-    if(nrow(pos) == 0){
+    if (nrow(pos) == 0) {
       showNotification("No points selected", type = "error")
       return()
     }
-    pos$Response <- 1  # Label positive observations
+    pos_complete <- pos %>% filter(complete.cases(.))
+    if (nrow(pos_complete) < nrow(pos)) {
+      showNotification("Points with missing values ignored", type = "warn")
+    }
+    if (nrow(pos_complete) == 0) {
+      showNotification("No points with complete data", type = "error")
+    }
+    pos <- pos_complete
+    # Label positive observations
+    pos$Response <- 1
     
     # Generate 100 random negative points within the raster extent
     random_coords <- data.frame(
-      Longitude = runif(100, xmin(bathymetry), xmax(bathymetry)),
-      Latitude  = runif(100, ymin(bathymetry), ymax(bathymetry))
+      Longitude = runif(1000, xmin(bathymetry), xmax(bathymetry)),
+      Latitude  = runif(1000, ymin(bathymetry), ymax(bathymetry))
     )
     random_vals <- terra::extract(predictorsStack, random_coords)
     random_data <- cbind(random_coords, random_vals[,-1])
@@ -182,9 +229,9 @@ shinyServer(function(input, output, session) {
     
     # Predict across the entire raster stack using the fitted model
     pred_raster <- terra::predict(predictorsStack, model, type = "response")
-    #predRaster(pred_raster)
+    predRaster(pred_raster)
 
-    # Define a numeric color palette using the viridis scale
+    # # Define a numeric color palette using the viridis scale
     pal <- colorNumeric(
       palette = viridis::magma(256),
       domain = c(
@@ -193,19 +240,28 @@ shinyServer(function(input, output, session) {
       na.color = "transparent")
     
     leafletProxy("map") %>%
-      clearImages() %>%
+      #clearImages() %>%
       addRasterImage(
         pred_raster,
         colors = pal,
         opacity = 0.8,
+        group = "Prediction",
         project = TRUE) %>%
-      clearControls() %>%
-      addLegend(
-        pal = pal,
-        values = c(
-          min(values(pred_raster), na.rm = TRUE),
-          max(values(pred_raster), na.rm = TRUE)),
-        title = "Similarity")
+      updateRadioButtons("layerSelect", selected = "Prediction")
+    
+      # clearControls() %>%
+      # addLegend(
+      #   pal = pal,
+      #   values = c(
+      #     min(values(pred_raster), na.rm = TRUE),
+      #     max(values(pred_raster), na.rm = TRUE)),
+      #   title = "Similarity")
+  })
+  
+  # Update layer selection when prediction changes
+  observeEvent(input$predRaster, {
+    leafletProxy("map") %>%
+      addMarkers(lng = ~lng, lat = ~lat, group = "Points")
   })
   
   # --- Display Selected Points in a Data Table ---

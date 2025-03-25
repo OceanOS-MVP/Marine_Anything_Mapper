@@ -6,14 +6,10 @@ shinyUI(fluidPage(
   titlePanel("Marine Anything Mapper"),
   sidebarLayout(
     sidebarPanel(
-      p("Please selections on the web map in the main panel on the right"),
+      p("Please select locations by clicking on the web map in the main panel on the right"),
       h4("--- Or ---"),
       p("Upload a CSV with location coordinates.
-        The CSV should contain two columns, `lng` and `lat`."),
-      # checkboxGroupInput("predictors", "Select Environmental Predictor Layers:",
-      #                    choices = c("Bathymetry", "Chlorophyll", "Salinity"),
-      #                    selected = "Bathymetry"),
-      # checkboxInput("show_prediction", "Show Model Predictions", value = FALSE),
+        The CSV should contain two numeric columns, lng and lat."),
       br(),
       br(),
       fileInput("upload_csv", "Upload CSV File", accept = c(".csv")),
@@ -26,7 +22,7 @@ shinyUI(fluidPage(
       actionButton("submit", "Submit")
     ),
     mainPanel(
-      leafletOutput("map", height = "600px")
+      leafletOutput("map", height = "60pc")
     )
   )
 ))

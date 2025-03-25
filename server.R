@@ -49,7 +49,7 @@ predictorsStack <- c(bathymetry, chlorophyll, salinity)
 names(predictorsStack) <- c("Bathymetry", "Chlorophyll", "Salinity")
 
 # --- Reactive Storage for User-Selected Points ---
-# Each point will store its Latitude, Longitude and the values for each predictor.
+# Each point will store its lng, lat and the values for each predictor.
 selectedPoints <- reactiveVal(data.frame(
   lng = numeric(),
   lat = numeric(),
@@ -58,60 +58,47 @@ selectedPoints <- reactiveVal(data.frame(
   Salinity = numeric()
 ))
 
+# --- Reactive Storage for Model Predictions and Layer Order ---
+predRaster <- reactiveVal(NULL)
+layerOrder <- reactiveVal(character(0))
+
 shinyServer(function(input, output, session) {
   
   # --- Initial Leaflet Map Setup ---
   output$map <- renderLeaflet({
     leaflet() %>%
-      addTiles() %>% 
+      addProviderTiles(
+        #group = "Basemap")
+        provider = providers$Esri.OceanBasemap) %>%
+      addLayersControl(
+        baseGroups = c(
+          "Basemap",
+          "Bathymetry",
+          "Chlorophyll",
+          "Salinity",
+          "Prediction"),
+        overlayGroups = c("Markers"),
+        options = layersControlOptions(collapsed = FALSE)) %>%
+      addScaleBar(
+        position = "bottomright",
+        options = scaleBarOptions(
+          maxWidth = 100,
+          metric = TRUE,
+          imperial = TRUE,
+          updateWhenIdle = FALSE)) %>%
       setView(lng = 0, lat = 52.5, zoom = 5)
   })
   
-  # --- Update Raster Overlay Based on Predictor Selection ---
-  observe({
-    predictor <- input$predictor
-    rasterToShow <- switch(
-      predictor,
-      "Bathymetry" = bathymetry,
-      "Chlorophyll" = chlorophyll,
-      "Salinity" = salinity)
-    
-    # Define a numeric color palette using the viridis scale
-    pal <- colorNumeric(
-      palette = viridis(256),
-      domain = c(
-        min(values(rasterToShow), na.rm = TRUE),
-        max(values(rasterToShow), na.rm = TRUE)),
-      na.color = "transparent")
-    
-    leafletProxy("map") %>%
-      clearImages() %>%
-      addRasterImage(
-        rasterToShow,
-        colors = pal,
-        opacity = 0.8,
-        project = TRUE) %>%
-      clearControls() %>%
-      addLegend(
-        pal = pal,
-        values = c(
-          min(values(rasterToShow), na.rm = TRUE),
-          max(values(rasterToShow), na.rm = TRUE)),
-        title = predictor)
-  })
-  
-  # --- Capture Map Clicks and Record Environmental Data ---
+  # --- Capture Map Clicks: Record Environmental Data and Add Marker ---
   observeEvent(input$map_click, {
     click <- input$map_click
     lat <- click$lat
     lng <- click$lng
     
-    # Extract predictor values at the clicked location using terra::extract
     b_val   <- terra::extract(bathymetry, cbind(lng, lat))[[1]]
     chl_val <- terra::extract(chlorophyll, cbind(lng, lat))[[1]]
     sal_val <- terra::extract(salinity, cbind(lng, lat))[[1]]
     
-    # Append new point to the reactive data.frame
     df <- selectedPoints()
     newRow <- data.frame(
       lng = lng,
@@ -120,16 +107,53 @@ shinyServer(function(input, output, session) {
       Chlorophyll = chl_val,
       Salinity = sal_val)
     selectedPoints(bind_rows(df, newRow))
+    
+    # Add a minimalistic circle marker at the clicked location
+    leafletProxy("map") %>% addCircleMarkers(
+      lng = lng, lat = lat,
+      radius = 5,
+      color = "black",
+      fill = TRUE,
+      fillOpacity = 1,
+      group = "Markers")
   })
   
-  # --- Display Selected Points in a Data Table ---
-  output$locationTable <- DT::renderDataTable({
-    selectedPoints() %>%
-      DT::datatable() %>%
-      DT::formatRound(columns = c(1:5), digits = 2)
+  # --- File Upload Functionality ---
+  observeEvent(input$upload_csv, {
+    file <- input$upload_csv
+    if(is.null(file)) return()
+    
+    data <- read.csv(file$datapath)
+    # Accept CSVs with columns "lng" and "lat" or "Longitude" and "Latitude"
+    if(all(c("lng", "lat") %in% names(data))){
+      data$lng <- as.numeric(data$lng)
+      data$lat <- as.numeric(data$lat)
+    } else if(all(c("Longitude", "Latitude") %in% names(data))){
+      data$lng <- as.numeric(data$Longitude)
+      data$lat <- as.numeric(data$Latitude)
+    } else {
+      showNotification("CSV file must contain lng and lat columns", type = "error")
+      return()
+    }
+    
+    # Extract environmental predictor values for each location
+    data$Bathymetry <- terra::extract(bathymetry, cbind(data$lng, data$lat))[,2]
+    data$Chlorophyll <- terra::extract(chlorophyll, cbind(data$lng, data$lat))[,2]
+    data$Salinity <- terra::extract(salinity, cbind(data$lng, data$lat))[,2]
+    
+    # Append new locations to the reactive data.frame
+    selectedPoints(bind_rows(selectedPoints(), data[, c("lng", "lat", "Bathymetry", "Chlorophyll", "Salinity")]))
+    
+    # Add markers for the uploaded locations
+    leafletProxy("map") %>% addCircleMarkers(
+      lng = data$lng, lat = data$lat,
+      radius = 5,
+      color = "black",
+      fill = TRUE,
+      fillOpacity = 1)
   })
   
-  # --- Run Lookalike GLM Model Upon Submission ---
+  # --- Run Lookalike GLM Model Upon Submission and Store Prediction Raster ---
   observeEvent(input$submit, {
     pos <- selectedPoints()
     if(nrow(pos) == 0){
@@ -151,30 +175,43 @@ shinyServer(function(input, output, session) {
     model_data <- bind_rows(pos, random_data)
     
     # Fit a binary classifier using glm
-    model <- glm(Response ~ Bathymetry + Chlorophyll + Salinity,
-                 data = model_data, family = binomial)
+    model <- glm(
+      formula = Response ~ Bathymetry + Chlorophyll + Salinity,
+      data = model_data,
+      family = binomial)
     
     # Predict across the entire raster stack using the fitted model
     pred_raster <- terra::predict(predictorsStack, model, type = "response")
-    
-    # Define a palette for the prediction layer using the magma scheme
-    pal_pred <- colorNumeric(
+    #predRaster(pred_raster)
+
+    # Define a numeric color palette using the viridis scale
+    pal <- colorNumeric(
       palette = viridis::magma(256),
-      domain = c(min(values(pred_raster), na.rm = TRUE),
-                 max(values(pred_raster), na.rm = TRUE)),
+      domain = c(
+        min(values(pred_raster), na.rm = TRUE),
+        max(values(pred_raster), na.rm = TRUE)),
       na.color = "transparent")
     
     leafletProxy("map") %>%
       clearImages() %>%
       addRasterImage(
         pred_raster,
-        colors = pal_pred,
+        colors = pal,
         opacity = 0.8,
         project = TRUE) %>%
       clearControls() %>%
-      addLegend(pal = pal_pred,
-                values = c(min(values(pred_raster), na.rm = TRUE),
-                           max(values(pred_raster), na.rm = TRUE)),
-                title = "Prediction")
+      addLegend(
+        pal = pal,
+        values = c(
+          min(values(pred_raster), na.rm = TRUE),
+          max(values(pred_raster), na.rm = TRUE)),
+        title = "Similarity")
+  })
+  
+  # --- Display Selected Points in a Data Table ---
+  output$locationTable <- DT::renderDataTable({
+    selectedPoints() %>%
+      DT::datatable() %>%
+      DT::formatRound(columns = c(1:5), digits = 2)
   })
 })

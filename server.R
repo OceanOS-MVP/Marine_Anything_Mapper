@@ -6,12 +6,19 @@ library(viridis)
 library(shinyjs)
 library(randomForest)
 
-rasters <- terra::rast("data/predictor_rasters.tif")
+set.seed(42)
 
+# Load predictor variables
+rasters <- terra::rast("data/predictor_rasters.tif")
+# Generate negative points sample within the raster extent
+sample_background <- rasters %>%
+  terra::spatSample(3000, method = "regular", na.rm = TRUE, xy = TRUE) %>%
+  mutate(Response = 0)
+                  
 # --- Reactive Storage for User-Selected Points ---
 selectedPoints <- reactiveVal(data.frame(
-  lng = numeric(),
-  lat = numeric(),
+  x = numeric(),
+  y = numeric(),
   bathymetry = numeric(),
   chl = numeric(),
   thetao = numeric(),
@@ -65,8 +72,8 @@ shinyServer(function(input, output, session) {
     
     df <- selectedPoints()
     newRow <- data.frame(
-      lng = lng,
-      lat = lat,
+      x = lng,
+      y = lat,
       bathymetry = pred_vals["bathymetry"],
       chl = pred_vals["chl"],
       thetao = pred_vals["thetao"],
@@ -131,46 +138,30 @@ shinyServer(function(input, output, session) {
       fillOpacity = 1)
   })
   
-  # --- Run Lookalike GLM Model Upon Submission and Store Prediction Raster ---
+  # --- Run Lookalike Model Upon Submission and Store Prediction Raster ---
   observeEvent(input$submit, {
-    pos <- selectedPoints()
-    if (nrow(pos) == 0) {
+    sample_selected <- selectedPoints()
+    if (nrow(sample_selected) == 0) {
       showNotification("No points selected", type = "error")
       return()
     }
-    pos_complete <- pos %>% filter(complete.cases(.))
-    if (nrow(pos_complete) < nrow(pos)) {
+    sample_selected_complete <- sample_selected %>% filter(complete.cases(.))
+    if (nrow(sample_selected_complete) < nrow(sample_selected)) {
       showNotification("Points with missing values ignored", type = "warn")
     }
-    if (nrow(pos_complete) == 0) {
+    if (nrow(sample_selected_complete) == 0) {
       showNotification("No points with complete data", type = "error")
       return()
     }
-    pos <- pos_complete
+    sample_selected <- sample_selected_complete
     # Label positive observations
-    pos$Response <- 1
-    
-    # Generate 1000 random negative points within the raster extent
-    random_coords <- data.frame(
-      Longitude = runif(1000, xmin(rasters), xmax(rasters)),
-      Latitude  = runif(1000, ymin(rasters), ymax(rasters))
-    )
-    random_vals <- terra::extract(rasters, random_coords)
-    random_data <- cbind(random_coords, random_vals[,-1])
-    random_data$Response <- 0  # Label negatives
+    sample_selected["Response"] <- 1
     
     # Combine positive and negative observations
-    model_data <- pos %>%
-      bind_rows(random_data) %>%
-      select(-lng, -lat, -Longitude, -Latitude) %>%
-      filter(complete.cases(.))
-    
-    # # Fit a binary classifier using glm
-    # model <- glm(
-    #   formula = Response ~ .,
-    #   data = model_data,
-    #   family = binomial)
-    
+    model_data <- sample_selected %>%
+      bind_rows(sample_background) %>%
+      select(-any_of(c("lng", "lat", "Longitude", "Latitude", "x", "y")))
+
     set.seed(42)
     model <- model_data %>%
       mutate(Response = as.factor(Response)) %>%
@@ -178,7 +169,7 @@ shinyServer(function(input, output, session) {
       formula = Response ~ .,
       data = .,
       ntree = 500,
-      mtry = 4,
+      mtry = 3,
       importance = TRUE)
     
     # Predict across the entire raster stack using the fitted model

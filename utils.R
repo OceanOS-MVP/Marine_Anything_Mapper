@@ -1,4 +1,3 @@
-
 render_map <- function() {
   leaflet() %>%
     addProviderTiles(

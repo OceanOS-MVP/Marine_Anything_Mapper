@@ -22,28 +22,3 @@ rasters <- terra::rast("data/predictor_rasters.tif")
 sample_background <- rasters %>%
   terra::spatSample(3000, method = "regular", na.rm = TRUE, xy = TRUE) %>%
   mutate(Response = 0)
-
-# Reactive values --------------------------------------------------------------
-
-# for User-Selected Points
-selectedPoints <- reactiveVal(data.frame(
-  x = numeric(),
-  y = numeric(),
-  bathymetry = numeric(),
-  chl = numeric(),
-  thetao = numeric(),
-  so = numeric(),
-  mlotst = numeric(),
-  uo = numeric(),
-  attn = numeric(),
-  diato = numeric(),
-  phyc = numeric(),
-  no3 = numeric(),
-  o2 = numeric(),
-  ph = numeric(),
-  po4 = numeric(),
-  nppv = numeric()
-))
-
-# for Model Predictions
-predictionRaster <- reactiveVal(NULL)

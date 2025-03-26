@@ -6,15 +6,6 @@ RUN apt-get update
 RUN apt-get install -y libudunits2-dev libproj-dev libgdal-dev
 RUN ldconfig
 
-library(shiny)
-library(leaflet)
-library(terra)
-library(tidyverse)
-library(viridis)
-library(shinyjs)
-library(randomForest)
-
-
 # Install R dependencies
 RUN R -e "install.packages(c(
   'tidyverse',

@@ -1,9 +1,5 @@
-library(shiny)
-library(shinyjs)
-library(leaflet)
-library(DT)
 
-shinyUI(fluidPage(
+ui <- shinyUI(fluidPage(
   useShinyjs(),
   titlePanel("Marine Anything Mapper"),
   sidebarLayout(

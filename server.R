@@ -1,68 +1,12 @@
-library(shiny)
-library(leaflet)
-library(terra)
-library(tidyverse)
-library(viridis)
-library(shinyjs)
-library(randomForest)
 
-set.seed(42)
-
-# Load predictor variables
-rasters <- terra::rast("data/predictor_rasters.tif")
-# Generate negative points sample within the raster extent
-sample_background <- rasters %>%
-  terra::spatSample(3000, method = "regular", na.rm = TRUE, xy = TRUE) %>%
-  mutate(Response = 0)
-                  
-# --- Reactive Storage for User-Selected Points ---
-selectedPoints <- reactiveVal(data.frame(
-  x = numeric(),
-  y = numeric(),
-  bathymetry = numeric(),
-  chl = numeric(),
-  thetao = numeric(),
-  so = numeric(),
-  mlotst = numeric(),
-  uo = numeric(),
-  attn = numeric(),
-  diato = numeric(),
-  phyc = numeric(),
-  no3 = numeric(),
-  o2 = numeric(),
-  ph = numeric(),
-  po4 = numeric(),
-  nppv = numeric()
-))
-
-# --- Reactive Storage for Model Predictions and Layer Order ---
-predRaster <- reactiveVal(NULL)
-
-shinyServer(function(input, output, session) {
+server <- shinyServer(function(input, output, session) {
   
-  # --- Initial Leaflet Map Setup ---
+  # Initial Leaflet Map Setup
   output$map <- renderLeaflet({
-    leaflet() %>%
-      addProviderTiles(
-        provider = providers$Esri.OceanBasemap,
-        group = "Basemap") %>%
-      addLayersControl(
-        baseGroups = c(
-          "Basemap",
-          "Prediction"),
-        overlayGroups = c("Markers"),
-        options = layersControlOptions(collapsed = FALSE)) %>%
-      addScaleBar(
-        position = "bottomright",
-        options = scaleBarOptions(
-          maxWidth = 100,
-          metric = TRUE,
-          imperial = TRUE,
-          updateWhenIdle = FALSE)) %>%
-      setView(lng = 0, lat = 52.5, zoom = 5)
+    render_map()
   })
   
-  # --- Capture Map Clicks: Record Environmental Data and Add Marker ---
+  # Capture Map Clicks: Record Environmental Data and Add Marker ---------------
   observeEvent(input$map_click, {
     click <- input$map_click
     lat <- click$lat
@@ -104,43 +48,50 @@ shinyServer(function(input, output, session) {
       group = "Markers")
   })
   
-  # --- File Upload Functionality ---
+  # File Upload Functionality --------------------------------------------------
+
   observeEvent(input$upload_csv, {
     file <- input$upload_csv
-    if(is.null(file)) return()
+    if (is.null(file)) return()
     
     data <- read.csv(file$datapath)
     # Accept CSVs with columns "lng" and "lat" or "Longitude" and "Latitude"
-    if(all(c("lng", "lat") %in% names(data))){
+    if (all(c("x", "y") %in% names(data))){
       data$lng <- as.numeric(data$lng)
       data$lat <- as.numeric(data$lat)
-    } else if(all(c("Longitude", "Latitude") %in% names(data))){
-      data$lng <- as.numeric(data$Longitude)
-      data$lat <- as.numeric(data$Latitude)
+    # } else if (all(c("Longitude", "Latitude") %in% names(data))){
+    #   data$lng <- as.numeric(data$Longitude)
+    #   data$lat <- as.numeric(data$Latitude)
+    # } else if (all(c("lng", "lat") %in% names(data))){
+    #   data$lng <- as.numeric(data$Longitude)
+    #   data$lat <- as.numeric(data$Latitude)
     } else {
-      showNotification("CSV file must contain lng and lat columns", type = "error")
+      showNotification("CSV file must contain x and y columns", type = "error")
       return()
     }
     
     # Extract environmental predictor values for each location
-    pred_vals <- terra::extract(rasters, cbind(data$lng, data$lat))
+    pred_vals <- terra::extract(rasters, cbind(data["x"], data["y"]))
 
     # Append new locations to the reactive data.frame
-    #TODO: FIX THIS
-    selectedPoints(bind_rows(selectedPoints(), data[, c("lng", "lat", "Bathymetry", "Chlorophyll", "Salinity")]))
+    selectedPoints(bind_rows(
+      selectedPoints(),
+      data[, c("x", "y")]))
     
     # Add markers for the uploaded locations
-    leafletProxy("map") %>% addCircleMarkers(
-      lng = data$lng, lat = data$lat,
-      radius = 5,
-      color = "black",
-      fill = TRUE,
-      fillOpacity = 1)
+    leafletProxy("map") %>%
+      addCircleMarkers(
+        lng = data["x"], lat = data["y"],
+        radius = 5,
+        color = "black",
+        fill = TRUE,
+        fillOpacity = 1)
   })
   
-  # --- Run Lookalike Model Upon Submission and Store Prediction Raster ---
+  # Run Lookalike Model Upon Submission and Store Prediction Raster ------------
   observeEvent(input$submit, {
     sample_selected <- selectedPoints()
+    # Warnings and errors for NA values
     if (nrow(sample_selected) == 0) {
       showNotification("No points selected", type = "error")
       return()
@@ -161,53 +112,12 @@ shinyServer(function(input, output, session) {
     model_data <- sample_selected %>%
       bind_rows(sample_background) %>%
       select(-any_of(c("lng", "lat", "Longitude", "Latitude", "x", "y")))
-
-    set.seed(42)
-    model <- model_data %>%
-      mutate(Response = as.factor(Response)) %>%
-      randomForest::randomForest(
-      formula = Response ~ .,
-      data = .,
-      ntree = 500,
-      mtry = 3,
-      importance = TRUE)
     
-    # Predict across the entire raster stack using the fitted model
-    pred_raster <- terra::predict(rasters, model, type = "prob")
+    model <- fit_model(model_data)
     
-    log_transform <- TRUE
-    # log scale prediction if enabled
-    if (log_transform == TRUE) {
-      pred_raster <- (log10(pred_raster[[2]] + 0.00001) + 5) / 5
-    } else {
-      pred_raster <- pred_raster[[2]]
-    }
-    predRaster(pred_raster)
-    
-    # Define a numeric color palette using the viridis scale
-    pal <- colorNumeric(
-      palette = viridis::viridis(256),
-      domain = c(0, 1),
-      na.color = "black")
-    
-    leafletProxy("map") %>%
-      addRasterImage(
-        pred_raster,
-        colors = pal,
-        opacity = 1,
-        group = "Prediction",
-        project = TRUE)
-    
-    # Programmatically update the layers control to select the "Prediction" group:
-    runjs("
-      var radios = document.getElementsByClassName('leaflet-control-layers-selector');
-      for (var i = 0; i < radios.length; i++) {
-        if(radios[i].nextSibling.textContent.trim() === 'Prediction'){
-          radios[i].click();
-          break;
-        }
-      }
-    ");
+    prediction_raster <- make_prediction(model, raster)
+    predictionRaster(prediction_raster)
+    plot_prediction(prediction_raster)
   })
   
   # --- Display Selected Points in a Data Table ---

@@ -36,10 +36,10 @@ ui <- shinyUI(fluidPage(
   ),
   sidebarLayout(
     sidebarPanel(
-      p("Please click the map on the right to select locations"),
+      strong("Please click the map on the right to select locations"),
       br(),
       br(),
-      h4("--- Or ---"),
+      strong("--- Or ---"),
       br(),
       br(),
       fileInput(

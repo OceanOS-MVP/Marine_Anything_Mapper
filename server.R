@@ -140,7 +140,7 @@ server <- shinyServer(function(input, output, session) {
   output$locationTable <- DT::renderDataTable({
     selectedPoints() %>%
       select(x, y) %>%
-      DT::datatable() %>%
+      DT::datatable(options = list(searching = FALSE)) %>%
       DT::formatRound(columns = c(1:2), digits = 2)
   })
 })

@@ -7,17 +7,7 @@ RUN apt-get install -y libudunits2-dev libproj-dev libgdal-dev
 RUN ldconfig
 
 # Install R dependencies
-RUN R -e "install.packages(c(
-  'tidyverse',
-  'shiny',
-  'leaflet',
-  'leaflet.extras',
-  'terra',
-  'viridis',
-  'DT',
-  'scales',
-  'shinyjs',
-  'randomForest'))"
+RUN R -e "install.packages(c('leaflet', 'leaflet.extras', 'terra', 'viridis', 'DT', 'scales', 'shinyjs', 'randomForest'))"
 
 # Copy the Shiny app code
 COPY ./ /home

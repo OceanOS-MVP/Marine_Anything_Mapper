@@ -1,3 +1,9 @@
+# TODO:
+# - set maximum number of points
+# - add extent bounding box
+
+
+
 library(shiny)
 library(shinyjs)
 library(tidyverse)

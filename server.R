@@ -31,40 +31,25 @@ server <- shinyServer(function(input, output, session) {
   
   # Capture Map Clicks: Record Environmental Data and Add Marker ---------------
   observeEvent(input$map_click, {
+    
+    # Extract values for new point
     click <- input$map_click
-    lat <- click$lat
-    lng <- click$lng
-    
-    pred_vals <- terra::extract(rasters, cbind(lng, lat))
-    
-    df <- selectedPoints()
-    newRow <- data.frame(
-      x = lng,
-      y = lat,
-      bathymetry = pred_vals["bathymetry"],
-      chl = pred_vals["chl"],
-      thetao = pred_vals["thetao"],
-      so = pred_vals["so"],
-      mlotst = pred_vals["mlotst"],
-      uo = pred_vals["uo"],
-      attn =  pred_vals["attn"],
-      diato = pred_vals["diato"],
-      phyc = pred_vals["phyc"],
-      no3 = pred_vals["no3"],
-      o2 = pred_vals["o2"],
-      ph = pred_vals["ph"],
-      po4 = pred_vals["po4"],
-      nppv = pred_vals["nppv"])
-    
+    x <- click$lng
+    y <- click$lat
+    pred_vals <- rasters %>%
+      terra::extract(cbind(x, y)) %>%
+      bind_cols(x = x, y = y, .)
+
     # Update reactive value
-    df %>%
-      bind_rows(newRow) %>%
+    selectedPoints() %>%
+      bind_rows(pred_vals) %>%
       selectedPoints()
     
-    # Add a minimalistic circle marker at the clicked location
+    # Add a circle marker at the clicked location
     leafletProxy("map") %>%
       addCircleMarkers(
-        lng = lng, lat = lat,
+        lng = x,
+        lat = y,
         radius = 5,
         color = "black",
         fill = TRUE,
@@ -78,7 +63,7 @@ server <- shinyServer(function(input, output, session) {
     file <- input$upload_csv
     if (is.null(file)) return()
     
-    data <- read.csv(file["datapath"])
+    data <- read.csv(file["datapath"][[1]])
     # Accept CSVs with columns "lng" and "lat" or "Longitude" and "Latitude"
     if (!all(c("x", "y") %in% names(data))){
       showNotification("CSV file must contain x and y columns", type = "error")
@@ -86,17 +71,21 @@ server <- shinyServer(function(input, output, session) {
     }
     
     # Extract environmental predictor values for each location
-    pred_vals <- terra::extract(rasters, cbind(data["x"], data["y"]))
-    
-    # Append new locations to the reactive data.frame
-    selectedPoints(bind_rows(
-      selectedPoints(),
-      data[, c("x", "y")]))
+    pred_vals <- rasters %>%
+      terra::extract(data[, c("x", "y")]) %>%
+      bind_cols(data[, c("x", "y")], .) %>%
+      select(-any_of("ID"))
+
+    # Update reactive value
+    selectedPoints() %>%
+      bind_rows(pred_vals) %>%
+      selectedPoints()
     
     # Add markers for the uploaded locations
     leafletProxy("map") %>%
       addCircleMarkers(
-        lng = data["x"], lat = data["y"],
+        lng = data[["x"]],
+        lat = data[["y"]],
         radius = 5,
         color = "black",
         fill = TRUE,
@@ -137,7 +126,10 @@ server <- shinyServer(function(input, output, session) {
         model <- fit_model(model_data)
         incProgress(0.5)
         
-        prediction_raster <- make_prediction(model, raster)
+        prediction_raster <- make_prediction(
+          model = model,
+          raster = raster,
+          log_transform = TRUE)
         predictionRaster(prediction_raster)
         plot_prediction(prediction_raster)
         incProgress(0.3)

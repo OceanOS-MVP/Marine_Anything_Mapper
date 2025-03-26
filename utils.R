@@ -34,11 +34,10 @@ fit_model <- function(model_data) {
 }
 
 
-make_prediction <- function(model, raster) {
+make_prediction <- function(model, raster, log_transform = TRUE) {
   # Predict across the entire raster stack using the fitted model
   pred_raster <- terra::predict(rasters, model, type = "prob")
   
-  log_transform <- TRUE
   # log scale prediction if enabled
   if (log_transform == TRUE) {
     pred_raster <- (log10(pred_raster[[2]] + 0.00001) + 5) / 5

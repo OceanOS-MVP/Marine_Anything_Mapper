@@ -48,10 +48,8 @@ ui <- shinyUI(fluidPage(
         accept = c(".csv")
       ),
       br(),
-      br(),
       h4("Selected Locations:"),
       DT::dataTableOutput("locationTable"),
-      br(),
       br(),
       h4("When you are done, press \"Submit\""),
       actionButton("submit", "Submit")

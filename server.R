@@ -4,6 +4,7 @@ library(terra)
 library(tidyverse)
 library(viridis)
 library(shinyjs)
+library(randomForest)
 
 rasters <- terra::rast("data/predictor_rasters.tif")
 
@@ -164,29 +165,45 @@ shinyServer(function(input, output, session) {
       select(-lng, -lat, -Longitude, -Latitude) %>%
       filter(complete.cases(.))
     
-    # Fit a binary classifier using glm
-    model <- glm(
+    # # Fit a binary classifier using glm
+    # model <- glm(
+    #   formula = Response ~ .,
+    #   data = model_data,
+    #   family = binomial)
+    
+    set.seed(42)
+    model <- model_data %>%
+      mutate(Response = as.factor(Response)) %>%
+      randomForest::randomForest(
       formula = Response ~ .,
-      data = model_data,
-      family = binomial)
+      data = .,
+      ntree = 500,
+      mtry = 4,
+      importance = TRUE)
     
     # Predict across the entire raster stack using the fitted model
-    pred_raster <- terra::predict(rasters, model, type = "response")
+    pred_raster <- terra::predict(rasters, model, type = "prob")
+    
+    log_transform <- TRUE
+    # log scale prediction if enabled
+    if (log_transform == TRUE) {
+      pred_raster <- (log10(pred_raster[[2]] + 0.00001) + 5) / 5
+    } else {
+      pred_raster <- pred_raster[[2]]
+    }
     predRaster(pred_raster)
     
     # Define a numeric color palette using the viridis scale
     pal <- colorNumeric(
-      palette = viridis::magma(256),
-      domain = c(
-        min(values(pred_raster), na.rm = TRUE),
-        max(values(pred_raster), na.rm = TRUE)),
-      na.color = "transparent")
+      palette = viridis::viridis(256),
+      domain = c(0, 1),
+      na.color = "black")
     
     leafletProxy("map") %>%
       addRasterImage(
         pred_raster,
         colors = pal,
-        opacity = 0.8,
+        opacity = 1,
         group = "Prediction",
         project = TRUE)
     
